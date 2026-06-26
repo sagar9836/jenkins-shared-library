@@ -3,12 +3,17 @@
  * Update Kubernetes manifests with new image tags for QBShop
  */
 def call(Map config = [:]) {
-    def imageTag = config.imageTag ?: error("Image tag is required")
-    def manifestsPath = config.manifestsPath ?: 'kubernetes'
+    def imageTag       = config.imageTag ?: error("Image tag is required")
+    def manifestsPath  = config.manifestsPath ?: 'kubernetes'
     def gitCredentials = config.gitCredentials ?: 'github-credentials'
-    def gitUserName = config.gitUserName ?: 'Jenkins CI'
-    def gitUserEmail = config.gitUserEmail ?: 'jenkins@ci.local'
+    def gitUserName    = config.gitUserName ?: 'Jenkins CI'
+    def gitUserEmail   = config.gitUserEmail ?: 'jenkins@ci.local'
+    def appImage       = config.appImage ?: error("App image name is required")
+    def migrationImage = config.migrationImage ?: error("Migration image name is required")
+    def repoUrl        = config.repoUrl ?: error("Repo URL is required")
+
     echo "Updating Kubernetes manifests with image tag: ${imageTag}"
+
     withCredentials([
         usernamePassword(
             credentialsId: gitCredentials,
@@ -16,27 +21,37 @@ def call(Map config = [:]) {
             passwordVariable: 'GIT_PASSWORD'
         )
     ]) {
-        // Configure Git
+
         sh """
-            git config user.name "${gitUserName}"
-            git config user.email "${gitUserEmail}"
+            git config user.name '${gitUserName}'
+            git config user.email '${gitUserEmail}'
         """
+
         sh """
-            # Update main QBShop application deployment
-            sed -i "s|image: satyamsri/qbshop-app:.*|image: satyamsri/qbshop-app:${imageTag}|g" ${manifestsPath}/08-qbshop-deployment.yaml
-            # Update migration job if present
+            # Update app deployment image
+            sed -i "s|image: .*qbshop-app:.*|image: ${appImage}:${imageTag}|g" ${manifestsPath}/08-qbshop-deployment.yaml
+
+            # Update migration job image
             if [ -f "${manifestsPath}/12-migration-job.yaml" ]; then
-                sed -i "s|image: satyamsri/qbshop-migration:.*|image: satyamsri/qbshop-migration:${imageTag}|g" ${manifestsPath}/12-migration-job.yaml
+                sed -i "s|image: .*qbshop-migration:.*|image: ${migrationImage}:${imageTag}|g" ${manifestsPath}/12-migration-job.yaml
             fi
-            # Check if changes occurred
+
             if git diff --quiet; then
                 echo "No changes to commit"
             else
                 git add ${manifestsPath}/*.yaml
                 git commit -m "Update QBShop image tags to ${imageTag} [ci skip]"
-                git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Satyams-git/Qualibytes-Ecommerce.git
-                git push origin HEAD:\${GIT_BRANCH}
             fi
         """
+
+        // safer push without interpolation warning
+        withEnv([
+            "REPO_URL=${repoUrl.replace('https://', '')}"
+        ]) {
+            sh '''
+                git remote set-url origin https://${GIT_USERNAME}:${GIT_PASSWORD}@${REPO_URL}
+                git push origin HEAD:${GIT_BRANCH}
+            '''
+        }
     }
 }
